@@ -165,16 +165,17 @@ contract VaultTokenizedScript is Script {
             );
 
         // set network limit with deployer
-        bytes32 subnetwork = Subnetwork.subnetwork(network, 0);
-        IFullRestakeDelegator(delegator_).setNetworkLimit(
-            subnetwork,
-            networkLimit
-        );
+        // TODO: set network limit once network has set max network limit
+        // bytes32 subnetwork = Subnetwork.subnetwork(network, 0);
+        // IFullRestakeDelegator(delegator_).setNetworkLimit(
+        //     subnetwork,
+        //     networkLimit
+        // );
 
-        // renounce network limit role from deployer
-        bytes32 role = IFullRestakeDelegator(delegator_)
-            .NETWORK_LIMIT_SET_ROLE();
-        AccessControlUpgradeable(delegator_).renounceRole(role, deployer);
+        // // renounce network limit role from deployer
+        // bytes32 role = IFullRestakeDelegator(delegator_)
+        //     .NETWORK_LIMIT_SET_ROLE();
+        // AccessControlUpgradeable(delegator_).renounceRole(role, deployer);
 
         vm.stopBroadcast();
 
