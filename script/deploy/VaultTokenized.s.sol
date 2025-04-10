@@ -17,6 +17,8 @@ import {IOperatorNetworkSpecificDelegator} from "../../src/interfaces/delegator/
 import {IBaseSlasher} from "../../src/interfaces/slasher/IBaseSlasher.sol";
 import {ISlasher} from "../../src/interfaces/slasher/ISlasher.sol";
 import {IVetoSlasher} from "../../src/interfaces/slasher/IVetoSlasher.sol";
+import {AccessControlUpgradeable} from "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {Subnetwork} from "../../src/contracts/libraries/Subnetwork.sol";
 
 contract VaultTokenizedScript is Script {
     function run(
@@ -32,12 +34,13 @@ contract VaultTokenizedScript is Script {
         uint64 delegatorIndex,
         address hook,
         address network,
+        uint256 networkLimit,
         bool withSlasher,
         uint64 slasherIndex,
         uint48 vetoDuration
     ) public {
         vm.startBroadcast();
-        (,, address deployer) = vm.readCallers();
+        (, , address deployer) = vm.readCallers();
 
         bool depositWhitelist = whitelistedDepositors.length != 0;
 
@@ -61,21 +64,16 @@ contract VaultTokenizedScript is Script {
             })
         );
 
-        uint256 roleHolders = 1;
-        if (hook != address(0) && hook != owner) {
-            roleHolders = 2;
-        }
-        address[] memory networkLimitSetRoleHolders = new address[](roleHolders);
-        address[] memory operatorNetworkLimitSetRoleHolders = new address[](roleHolders);
-        address[] memory operatorNetworkSharesSetRoleHolders = new address[](roleHolders);
+        address[] memory networkLimitSetRoleHolders = new address[](2);
         networkLimitSetRoleHolders[0] = owner;
+        // temporarily add deployer to set network limit
+        networkLimitSetRoleHolders[1] = deployer;
+
+        address[] memory operatorNetworkLimitSetRoleHolders = new address[](1);
         operatorNetworkLimitSetRoleHolders[0] = owner;
+
+        address[] memory operatorNetworkSharesSetRoleHolders = new address[](1);
         operatorNetworkSharesSetRoleHolders[0] = owner;
-        if (roleHolders > 1) {
-            networkLimitSetRoleHolders[1] = hook;
-            operatorNetworkLimitSetRoleHolders[1] = hook;
-            operatorNetworkSharesSetRoleHolders[1] = hook;
-        }
 
         bytes memory delegatorParams;
         if (delegatorIndex == 0) {
@@ -131,47 +129,57 @@ contract VaultTokenizedScript is Script {
         bytes memory slasherParams;
         if (slasherIndex == 0) {
             slasherParams = abi.encode(
-                ISlasher.InitParams({baseParams: IBaseSlasher.BaseParams({isBurnerHook: burner != address(0)})})
+                ISlasher.InitParams({
+                    baseParams: IBaseSlasher.BaseParams({
+                        isBurnerHook: burner != address(0)
+                    })
+                })
             );
         } else if (slasherIndex == 1) {
             slasherParams = abi.encode(
                 IVetoSlasher.InitParams({
-                    baseParams: IBaseSlasher.BaseParams({isBurnerHook: burner != address(0)}),
+                    baseParams: IBaseSlasher.BaseParams({
+                        isBurnerHook: burner != address(0)
+                    }),
                     vetoDuration: vetoDuration,
                     resolverSetEpochsDelay: 3
                 })
             );
         }
 
-        (address vault_, address delegator_, address slasher_) = IVaultConfigurator(vaultConfigurator).create(
-            IVaultConfigurator.InitParams({
-                version: 2,
-                owner: owner,
-                vaultParams: vaultParams,
-                delegatorIndex: delegatorIndex,
-                delegatorParams: delegatorParams,
-                withSlasher: withSlasher,
-                slasherIndex: slasherIndex,
-                slasherParams: slasherParams
-            })
+        (
+            address vault_,
+            address delegator_,
+            address slasher_
+        ) = IVaultConfigurator(vaultConfigurator).create(
+                IVaultConfigurator.InitParams({
+                    version: 2,
+                    owner: owner,
+                    vaultParams: vaultParams,
+                    delegatorIndex: delegatorIndex,
+                    delegatorParams: delegatorParams,
+                    withSlasher: withSlasher,
+                    slasherIndex: slasherIndex,
+                    slasherParams: slasherParams
+                })
+            );
+
+        // set network limit with deployer
+        bytes32 subnetwork = Subnetwork.subnetwork(network, 0);
+        IFullRestakeDelegator(delegator_).setNetworkLimit(
+            subnetwork,
+            networkLimit
         );
 
-        if (depositWhitelist) {
-            Vault(vault_).grantRole(Vault(vault_).DEFAULT_ADMIN_ROLE(), owner);
-            Vault(vault_).grantRole(Vault(vault_).DEPOSITOR_WHITELIST_ROLE(), deployer);
+        // renounce network limit role from deployer
+        bytes32 role = IFullRestakeDelegator(delegator_)
+            .NETWORK_LIMIT_SET_ROLE();
+        AccessControlUpgradeable(delegator_).renounceRole(role, deployer);
 
-            for (uint256 i; i < whitelistedDepositors.length; ++i) {
-                Vault(vault_).setDepositorWhitelistStatus(whitelistedDepositors[i], true);
-            }
-
-            Vault(vault_).renounceRole(Vault(vault_).DEPOSITOR_WHITELIST_ROLE(), deployer);
-            Vault(vault_).renounceRole(Vault(vault_).DEFAULT_ADMIN_ROLE(), deployer);
-        }
+        vm.stopBroadcast();
 
         console2.log("Vault: ", vault_);
         console2.log("Delegator: ", delegator_);
         console2.log("Slasher: ", slasher_);
-
-        vm.stopBroadcast();
     }
 }
